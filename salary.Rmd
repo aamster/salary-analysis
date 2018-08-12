@@ -1,0 +1,188 @@
+---
+title: "GT Salary"
+author: "Adam Amster"
+date: "8/8/2018"
+output: html_document
+---
+
+```{r include=F}
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+salary = read.csv("SalaryTravel.csv", stringsAsFactors = F)
+str(salary)
+summary(salary$Salary)
+```
+# Preprocessing
+
+```{r}
+salary = salary[c("Name", "Title", "Salary", "Travel")]
+salary$Title = trimws(salary$Title)
+salary = salary %>% filter(Salary >= 20000)
+```
+
+```{r}
+summary(salary$Salary)
+ggplot(salary, aes(Salary)) + geom_histogram(binwidth = 10000)
+```
+
+```{r}
+low_earners_gt_100_people = salary %>% 
+  filter(Salary <= median(Salary)) %>% 
+  group_by(Title) %>% 
+  filter(n() > 100)
+
+ggplot(low_earners_gt_100_people, aes(reorder(factor(Title), Salary, FUN = median), Salary)) +    
+  geom_boxplot() + 
+  coord_flip() + 
+  ggtitle("Salary distribution for low earners") + 
+  xlab("Title")
+
+ggplot(low_earners_gt_100_people) + 
+  geom_bar(aes(reorder(Title, Title, length))) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ggtitle("Employee count for low earners") +
+  xlab("Title")
+```
+
+```{r}
+bins = seq(from = 20000, to = 900000, by = 50000)
+salary["bucket"] = cut(salary$Salary, bins)
+ggplot(salary %>% group_by(bucket) %>% filter(n() > 10)) + geom_bar(aes(bucket)) + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r}
+high_earners = salary %>% filter(Salary >= quantile(salary$Salary, .9))
+
+high_earners_gt_5_people = high_earners %>% 
+  group_by(Title) %>% 
+  filter(n() > 5)
+
+ggplot(high_earners_gt_5_people, aes(reorder(factor(Title), Salary, FUN = median), Salary)) +  
+  geom_boxplot() + 
+  coord_flip() +
+  ggtitle("Salary distribution for high earners") +
+  xlab("Title")
+
+ggplot(high_earners_gt_5_people) + 
+  geom_bar(aes(reorder(Title, Title, length))) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  ggtitle("Employee count for high earners") +
+  xlab("Title")
+
+high_earners_1_person = high_earners %>% 
+  group_by(Title) %>% 
+  filter(n() == 1)
+
+ggplot(high_earners_1_person, aes(reorder(factor(Title), Salary, FUN = median), Salary)) + 
+  geom_boxplot() + 
+  coord_flip() +
+  ggtitle("Salary distribution for heads") +
+  xlab("Title")
+
+high_earners = high_earners %>%
+  mutate(professor = ifelse(grepl("PROFESSOR", Title), 1, 0))
+
+ggplot(high_earners, aes(Salary, "")) + geom_boxplot(aes(fill = "professor")) + coord_flip()
+```
+
+# Dig deeper into just professors
+
+```{r}
+salary = salary %>% filter(grepl("PROFESSOR", Title))
+colnames(salary)[colnames(salary) == "Title"] = "AccountingTitle"
+details = read.csv("Details.csv", stringsAsFactors = F, na.strings = c(""))
+salary = salary %>% inner_join(na.omit(details), by = "Name")
+nrow(salary)
+str(salary)
+```
+
+```{r}
+sort(unique(salary$Department))
+```
+
+```{r}
+salary$Title = tolower(salary$Title)
+salary$Title = gsub("[[:punct:]]", "", salary$Title)
+```
+
+```{r}
+professors_ge_10_in_department = salary %>% group_by(Department) %>% filter(n() >= 10)
+
+ggplot(professors_ge_10_in_department, aes(reorder(factor(Department), Salary, FUN = median), Salary)) + 
+  geom_boxplot() + 
+  coord_flip() +
+  ggtitle("Distribution of professor salaries by department") + 
+  xlab("Department")
+
+ggplot(professors_ge_10_in_department) + 
+  geom_bar(aes(reorder(Department, Department, length))) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Professor count by department") +
+  xlab("Department")
+```
+
+```{r}
+professors_gt_20_w_title = salary %>% group_by(Title) %>% filter(n() > 20)
+
+ggplot(professors_gt_20_w_title, aes(reorder(factor(Title), Salary, FUN = median), Salary)) + 
+  geom_boxplot() + 
+  coord_flip() +
+  ggtitle("Distribution of professor salaries by title") + 
+  xlab("Title")
+
+ggplot(professors_gt_20_w_title %>% group_by(Department) %>% filter(n() >= 10), aes(reorder(factor(Department), Salary, FUN = median), Salary)) + 
+  geom_point(aes(colour = Title)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  ggtitle("Distribution of professor salaries by department and title") +
+  xlab("Department")
+```
+
+# Building a model
+```{r}
+salary$Department = relevel(factor(salary$Department), "Literature,Media & Com")
+salary$Title = relevel(factor(salary$Title), "professor")
+model1 = lm(Salary ~ Department + Title, salary)
+summary(model1)
+summary(abs(model1$residuals))
+summary(model1$residuals[model1$residuals > 0])
+summary(model1$residuals[model1$residuals < 0])
+```
+
+```{r}
+model2 = lm(sqrt(Salary) ~ Department + Title, salary)
+summary(model2)
+```
+
+
+
+```{r}
+pred = predict(model1)
+
+ggplot(salary, aes(pred, model1$residuals)) + geom_point() + geom_smooth(method = "loess", se = F) + ylab("Residual") + xlab("Predicted values") + ggtitle("Distribution of residuals")
+
+as.list(cbind(pred[which(salary$Salary > quantile(salary$Salary, .9))], salary[which(salary$Salary > quantile(salary$Salary, .9)), c("Salary", "Department", "Title")])[84, ])
+```
+
+```{r}
+salary %>% filter(Department == "Scheller College of Business" & Title == "professor")
+summary((salary %>% filter(Department == "Scheller College of Business" & Title == "professor"))$Salary)
+```
+
+```{r}
+ggplot(salary, aes((salary %>% group_by(Department) %>% mutate(size = n()))$size, Salary)) + geom_point() + geom_smooth(method = "glm")
+
+ggplot(salary, aes((salary %>% group_by(Title) %>% mutate(size = n()))$size, Salary)) + geom_point() + geom_smooth(method = "glm")
+
+ggplot(salary, aes((salary %>% group_by(Title) %>% filter(n() == 1))$Salary)) + geom_histogram()
+```
+
+```{r}
+salary = salary %>% group_by(Department) %>% mutate(DepartmentSize = n())
+salary = salary %>% group_by(Title) %>% mutate(TitleSize = n())
+
+model2 = lm(Salary ~ Department + Title + TitleSize, salary)
+summary(model2)
+```
